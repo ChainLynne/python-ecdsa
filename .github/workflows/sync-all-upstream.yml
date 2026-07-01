@@ -1,0 +1,52 @@
+name: 自动同步Fork上游全部分支
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync_all:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 配置Git用户
+        run: |
+          git config --global user.name "AutoSync Bot"
+          git config --global user.email "sync@github.com"
+
+      - name: 自动查询Fork上游仓库地址
+        id: get_upstream
+        run: |
+          UPSTREAM=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          https://api.github.com/repos/${{ github.repository }} | jq -r '.source.full_name')
+          echo "UPSTREAM_REPO=$UPSTREAM" >> $GITHUB_ENV
+
+      - name: 添加上游远程仓库（自动获取，无需手动填写）
+        run: git remote add upstream https://github.com/${{ env.UPSTREAM_REPO }}.git
+
+      - name: 拉取上游所有分支与标签
+        run: git fetch upstream --tags
+
+      - name: 批量同步所有分支
+        run: |
+          git branch -r | grep '^upstream/' | grep -v HEAD | while read -r remote_branch; do
+            local_branch=${remote_branch#upstream/}
+            if ! git show-ref --verify --quiet refs/heads/$local_branch; then
+              git checkout -b $local_branch $remote_branch
+            else
+              git checkout $local_branch
+              git merge --no-edit $remote_branch
+            fi
+            git push origin $local_branch
+          done
+
+      - name: 同步所有标签
+        run: git push origin --tags
